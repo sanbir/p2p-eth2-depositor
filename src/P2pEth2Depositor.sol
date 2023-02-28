@@ -2,11 +2,29 @@
 
 pragma solidity 0.8.10;
 
-import "./@openzeppelin/contracts/access/Ownable.sol";
-import "./@openzeppelin/contracts/utils/Pausable.sol";
 import "./interfaces/IDepositContract.sol";
 
-contract P2pEth2Depositor is Pausable, Ownable {
+contract P2pEth2Depositor {
+
+    /**
+    * @notice do not send ETH directly here
+    */
+    error P2pEth2Depositor__DoNotSendEthDirectlyHere();
+
+    /**
+    * @notice you can deposit only 1 to 1000 nodes per transaction
+    */
+    error P2pEth2Depositor__NodeCountError();
+
+    /**
+    * @notice the amount of ETH does not match the amount of nodes
+    */
+    error P2pEth2Depositor__EtherValueError();
+
+    /**
+    * @notice amount of parameters do no match
+    */
+    error P2pEth2Depositor__AmountOfParametersError();
 
     /**
      * @dev Eth2 Deposit Contract address.
@@ -17,10 +35,7 @@ contract P2pEth2Depositor is Pausable, Ownable {
      * @dev Minimal and maximum amount of nodes per transaction.
      */
     uint256 public constant nodesMinAmount = 1;
-    uint256 public constant nodesMaxAmount = 100;
-    uint256 public constant pubkeyLength = 48;
-    uint256 public constant credentialsLength = 32;
-    uint256 public constant signatureLength = 96;
+    uint256 public constant nodesMaxAmount = 1000;
 
     /**
      * @dev Collateral size of one node.
@@ -32,21 +47,21 @@ contract P2pEth2Depositor is Pausable, Ownable {
      */
     constructor(bool mainnet, address depositContract_) {
         depositContract = mainnet
-            ? IDepositContract(0x00000000219ab540356cBB839Cbe05303d7705Fa)
-            : (depositContract_ == 0x0000000000000000000000000000000000000000)
-                ? IDepositContract(0x8c5fecdC472E27Bc447696F431E425D02dd46a8c)
-                : IDepositContract(depositContract_);
+        ? IDepositContract(0x00000000219ab540356cBB839Cbe05303d7705Fa)
+        : (depositContract_ == 0x0000000000000000000000000000000000000000)
+            ? IDepositContract(0x8c5fecdC472E27Bc447696F431E425D02dd46a8c)
+            : IDepositContract(depositContract_);
     }
 
     /**
      * @dev This contract will not accept direct ETH transactions.
      */
     receive() external payable {
-        revert("P2pEth2Depositor: do not send ETH directly here");
+        revert P2pEth2Depositor__DoNotSendEthDirectlyHere();
     }
 
     /**
-     * @dev Function that allows to deposit up to 100 nodes at once.
+     * @dev Function that allows to deposit up to 1000 nodes at once.
      *
      * - pubkeys                - Array of BLS12-381 public keys.
      * - withdrawal_credentials - Array of commitments to a public keys for withdrawals.
@@ -58,24 +73,28 @@ contract P2pEth2Depositor is Pausable, Ownable {
         bytes[] calldata withdrawal_credentials,
         bytes[] calldata signatures,
         bytes32[] calldata deposit_data_roots
-    ) external payable whenNotPaused {
+    ) external payable {
 
         uint256 nodesAmount = pubkeys.length;
 
-        require(nodesAmount > 0 && nodesAmount <= 100, "P2pEth2Depositor: you can deposit only 1 to 100 nodes per transaction");
-        require(msg.value == collateral * nodesAmount, "P2pEth2Depositor: the amount of ETH does not match the amount of nodes");
+        if (nodesAmount == 0 || nodesAmount > nodesMaxAmount) {
+            revert P2pEth2Depositor__NodeCountError();
+        }
 
+        if (msg.value != collateral * nodesAmount) {
+            revert P2pEth2Depositor__EtherValueError();
+        }
 
-        require(
+        if (!(
             withdrawal_credentials.length == nodesAmount &&
             signatures.length == nodesAmount &&
-            deposit_data_roots.length == nodesAmount,
-            "P2pEth2Depositor: amount of parameters do no match");
+            deposit_data_roots.length == nodesAmount
+        )) {
+            revert P2pEth2Depositor__AmountOfParametersError();
+        }
 
-        for (uint256 i = 0; i < nodesAmount; ++i) {
-            require(pubkeys[i].length == pubkeyLength, "P2pEth2Depositor: wrong pubkey");
-            require(withdrawal_credentials[i].length == credentialsLength, "P2pEth2Depositor: wrong withdrawal credentials");
-            require(signatures[i].length == signatureLength, "P2pEth2Depositor: wrong signatures");
+        for (uint256 i = 0; i < nodesAmount;) {
+            // pubkey, withdrawal_credentials, signature lengths are already checked inside ETH DepositContract
 
             depositContract.deposit{value: collateral}(
                 pubkeys[i],
@@ -84,32 +103,15 @@ contract P2pEth2Depositor is Pausable, Ownable {
                 deposit_data_roots[i]
             );
 
+            // An array can't have a total length
+            // larger than the max uint256 value.
+            unchecked {
+                ++i;
+            }
         }
 
         emit DepositEvent(msg.sender, nodesAmount);
     }
 
-    /**
-     * @dev Triggers stopped state.
-     *
-     * Requirements:
-     *
-     * - The contract must not be paused.
-     */
-    function pause() public onlyOwner {
-        _pause();
-    }
-
-    /**
-     * @dev Returns to normal state.
-     *
-     * Requirements:
-     *
-     * - The contract must be paused.
-     */
-    function unpause() public onlyOwner {
-        _unpause();
-    }
-
-    event DepositEvent(address from, uint256 nodesAmount);
+    event DepositEvent(address indexed from, uint256 nodesAmount);
 }
