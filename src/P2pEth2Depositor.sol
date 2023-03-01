@@ -40,7 +40,7 @@ contract P2pEth2Depositor {
     /**
      * @dev Collateral size of one node.
      */
-    uint256 public constant collateral = 32 ether;
+    uint256 public constant collateral = 32 gwei;
 
     /**
      * @dev Setting Eth2 Smart Contract address during construction.
